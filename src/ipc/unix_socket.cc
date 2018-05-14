@@ -96,14 +96,7 @@ base::ScopedFile UnixSocket::CreateAndBind(const std::string& socket_name) {
     return base::ScopedFile();
   }
 
-// Android takes an int as 3rd argument of bind() instead of socklen_t.
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-  const int bind_size = static_cast<int>(addr_size);
-#else
-  const socklen_t bind_size = addr_size;
-#endif
-
-  if (bind(*fd, reinterpret_cast<sockaddr*>(&addr), bind_size)) {
+  if (bind(*fd, reinterpret_cast<sockaddr*>(&addr), addr_size)) {
     PERFETTO_DPLOG("bind()");
     return base::ScopedFile();
   }
@@ -265,7 +258,7 @@ void UnixSocket::ReadPeerCredentials() {
   socklen_t len = sizeof(user_cred);
   int res = getsockopt(*fd_, 0, LOCAL_PEERCRED, &user_cred, &len);
   PERFETTO_CHECK(res == 0 && user_cred.cr_version == XUCRED_VERSION);
-  peer_uid_ = user_cred.cr_uid;
+  peer_uid_ = static_cast<uid_t>(user_cred.cr_uid);
 #endif
 }
 
@@ -351,15 +344,16 @@ bool UnixSocket::Send(const void* msg,
   if (blocking_mode == BlockingMode::kBlocking)
     SetBlockingIO(false);
 
-  if (sz >= 0) {
-    // There should be no way a non-blocking socket returns < |len|.
-    // If the queueing fails, sendmsg() must return -1 + errno = EWOULDBLOCK.
-    PERFETTO_CHECK(static_cast<size_t>(sz) == len);
+  if (sz == static_cast<ssize_t>(len)) {
     last_error_ = 0;
     return true;
   }
 
-  if (errno == EAGAIN || errno == EWOULDBLOCK) {
+  // If sendmsg() succeds but the returned size is < |len| it means that the
+  // endpoint disconnected in the middle of the read, and we managed to send
+  // only a portion of the buffer. In this case we should just give up.
+
+  if (sz < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
     // A genuine out-of-buffer. The client should retry or give up.
     // Man pages specify that EAGAIN and EWOULDBLOCK have the same semantic here
     // and clients should check for both.

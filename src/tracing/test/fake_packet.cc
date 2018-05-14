@@ -77,7 +77,7 @@ FakePacketFragment::FakePacketFragment(const void* payload,
   PERFETTO_CHECK(payload_size <= 4096 - 2);
   payload_.assign(reinterpret_cast<const char*>(payload), payload_size);
   uint8_t* end = WriteVarInt(payload_.size(), &header_[0]);
-  header_size_ = end - &header_[0];
+  header_size_ = static_cast<size_t>(end - &header_[0]);
 }
 
 void FakePacketFragment::CopyInto(std::vector<uint8_t>* data) const {
@@ -103,7 +103,7 @@ std::ostream& operator<<(std::ostream& os, const FakePacketFragment& packet) {
             << packet.payload() << "\"}";
 }
 
-FakeChunk::FakeChunk(TraceBuffez* t, ProducerID p, WriterID w, ChunkID c)
+FakeChunk::FakeChunk(TraceBuffer* t, ProducerID p, WriterID w, ChunkID c)
     : trace_buffer_{t}, producer_id{p}, writer_id{w}, chunk_id{c} {}
 
 FakeChunk& FakeChunk::AddPacket(size_t size, char seed, uint8_t packet_flag) {
@@ -126,6 +126,11 @@ FakeChunk& FakeChunk::AddPacket(std::initializer_list<uint8_t> raw) {
   return *this;
 }
 
+FakeChunk& FakeChunk::IncrementNumPackets() {
+  num_packets++;
+  return *this;
+}
+
 FakeChunk& FakeChunk::ClearBytes(size_t offset, size_t len) {
   PERFETTO_DCHECK(offset + len <= data.size());
   memset(data.data() + offset, 0, len);
@@ -141,7 +146,7 @@ size_t FakeChunk::CopyIntoTraceBuffer() {
   trace_buffer_->CopyChunkUntrusted(producer_id, uid, writer_id, chunk_id,
                                     num_packets, flags, data.data(),
                                     data.size());
-  return data.size() + TraceBuffez::InlineChunkHeaderSize;
+  return data.size() + TraceBuffer::InlineChunkHeaderSize;
 }
 
 }  // namespace perfetto

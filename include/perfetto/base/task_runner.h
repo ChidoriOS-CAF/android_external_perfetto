@@ -21,11 +21,7 @@
 
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/utils.h"
-
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
-    PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
 #include "perfetto/base/watchdog.h"
-#endif
 
 namespace perfetto {
 namespace base {
@@ -46,7 +42,7 @@ constexpr int64_t kWatchdogMillis = 30000;  // 30s
 // All methods of this interface can be called from any thread.
 class TaskRunner {
  public:
-  virtual ~TaskRunner() = default;
+  virtual ~TaskRunner();
 
   // Schedule a task for immediate execution. Immediate tasks are always
   // executed in the order they are posted. Can be called from any thread.
@@ -55,7 +51,7 @@ class TaskRunner {
   // Schedule a task for execution after |delay_ms|. Note that there is no
   // strict ordering guarantee between immediate and delayed tasks. Can be
   // called from any thread.
-  virtual void PostDelayedTask(std::function<void()>, int delay_ms) = 0;
+  virtual void PostDelayedTask(std::function<void()>, uint32_t delay_ms) = 0;
 
   // Schedule a task to run when |fd| becomes readable. The same |fd| can only
   // be monitored by one function. Note that this function only needs to be
@@ -72,12 +68,8 @@ class TaskRunner {
 
  protected:
   static void RunTask(const std::function<void()>& task) {
-#if !PERFETTO_BUILDFLAG(PERFETTO_CHROMIUM_BUILD) && \
-    (PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||       \
-     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID))
     Watchdog::Timer handle =
         base::Watchdog::GetInstance()->CreateFatalTimer(kWatchdogMillis);
-#endif
     task();
   }
 };

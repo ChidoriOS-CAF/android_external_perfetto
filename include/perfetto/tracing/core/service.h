@@ -64,16 +64,12 @@ class PERFETTO_EXPORT Service {
   //    the service don't talk locally but via some IPC mechanism.
   class ProducerEndpoint {
    public:
-    virtual ~ProducerEndpoint() = default;
+    virtual ~ProducerEndpoint();
 
-    // Called by the Producer to (un)register data sources. The Services returns
-    // asynchronousy the ID for the data source.
-    // TODO(primiano): thinking twice there is no reason why the service choses
-    // ID rather than the Producer. Update in upcoming CLs.
-    using RegisterDataSourceCallback = std::function<void(DataSourceID)>;
-    virtual void RegisterDataSource(const DataSourceDescriptor&,
-                                    RegisterDataSourceCallback) = 0;
-    virtual void UnregisterDataSource(DataSourceID) = 0;
+    // Called by the Producer to (un)register data sources. Data sources are
+    // identified by their name (i.e. DataSourceDescriptor.name)
+    virtual void RegisterDataSource(const DataSourceDescriptor&) = 0;
+    virtual void UnregisterDataSource(const std::string& name) = 0;
 
     // Called by the Producer to signal that some pages in the shared memory
     // buffer (shared between Service and Producer) have changed.
@@ -99,6 +95,10 @@ class PERFETTO_EXPORT Service {
     // DataSourceConfig.target_buffer().
     virtual std::unique_ptr<TraceWriter> CreateTraceWriter(
         BufferID target_buffer) = 0;
+
+    // Called in response to a Producer::Flush(request_id) call after all data
+    // for the flush request has been committed.
+    virtual void NotifyFlushComplete(FlushRequestID) = 0;
   };  // class ProducerEndpoint.
 
   // The API for the Consumer port of the Service.
@@ -109,13 +109,20 @@ class PERFETTO_EXPORT Service {
   //    the service don't talk locally but via some IPC mechanism.
   class ConsumerEndpoint {
    public:
-    virtual ~ConsumerEndpoint() = default;
+    virtual ~ConsumerEndpoint();
 
     // Enables tracing with the given TraceConfig. The ScopedFile argument is
     // used only when TraceConfig.write_into_file == true.
     virtual void EnableTracing(const TraceConfig&,
                                base::ScopedFile = base::ScopedFile()) = 0;
     virtual void DisableTracing() = 0;
+
+    // Requests all data sources to flush their data immediately and invokes the
+    // passed callback once all of them have acked the flush (in which case
+    // the callback argument |success| will be true) or |timeout_ms| are elapsed
+    // (in which case |success| will be false).
+    using FlushCallback = std::function<void(bool /*success*/)>;
+    virtual void Flush(uint32_t timeout_ms, FlushCallback) = 0;
 
     // Tracing data will be delivered invoking Consumer::OnTraceData().
     virtual void ReadBuffers() = 0;
@@ -128,7 +135,7 @@ class PERFETTO_EXPORT Service {
       std::unique_ptr<SharedMemory::Factory>,
       base::TaskRunner*);
 
-  virtual ~Service() = default;
+  virtual ~Service();
 
   // Connects a Producer instance and obtains a ProducerEndpoint, which is
   // essentially a 1:1 channel between one Producer and the Service.
@@ -146,6 +153,7 @@ class PERFETTO_EXPORT Service {
   virtual std::unique_ptr<ProducerEndpoint> ConnectProducer(
       Producer*,
       uid_t uid,
+      const std::string& name,
       size_t shared_memory_size_hint_bytes = 0) = 0;
 
   // Coonects a Consumer instance and obtains a ConsumerEndpoint, which is

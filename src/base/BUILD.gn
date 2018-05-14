@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import("//build_overrides/build.gni")
+import("../../gn/perfetto.gni")
 
 source_set("base") {
   deps = [
@@ -28,11 +29,14 @@ source_set("base") {
     "temp_file.cc",
     "thread_checker.cc",
     "unix_task_runner.cc",
+    "virtual_destructors.cc",
   ]
   if (!build_with_chromium && (is_linux || is_android)) {
-    sources += [ "watchdog.cc" ]
+    sources += [ "watchdog_posix.cc" ]
+  } else {
+    sources += [ "watchdog_noop.cc" ]
   }
-  if (is_debug) {
+  if (is_debug && !build_with_chromium && !build_with_android) {
     deps += [ ":debug_crash_stack_trace" ]
   }
 }
@@ -57,18 +61,18 @@ if (is_android && !build_with_chromium) {
   }
 }
 
-if (is_debug) {
+if (is_debug && !build_with_chromium && !build_with_android) {
   source_set("debug_crash_stack_trace") {
     sources = [
       "debug_crash_stack_trace.cc",
     ]
-    cflags = [
-      "-Wno-deprecated-dynamic-exception-spec",
-      "-Wno-disabled-macro-expansion",
-    ]
     deps = [
       "../../gn:default_deps",
     ]
+    if (is_linux || is_android) {
+      deps += [ "../../buildtools:libbacktrace" ]
+    }
+    cflags = [ "-Wno-deprecated" ]
   }
 }
 

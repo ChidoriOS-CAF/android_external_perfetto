@@ -60,16 +60,28 @@ class PERFETTO_EXPORT TestConfig {
   uint32_t message_count() const { return message_count_; }
   void set_message_count(uint32_t value) { message_count_ = value; }
 
+  uint32_t max_messages_per_second() const { return max_messages_per_second_; }
+  void set_max_messages_per_second(uint32_t value) {
+    max_messages_per_second_ = value;
+  }
+
   uint32_t seed() const { return seed_; }
   void set_seed(uint32_t value) { seed_ = value; }
 
   uint64_t message_size() const { return message_size_; }
   void set_message_size(uint64_t value) { message_size_ = value; }
 
+  bool send_batch_on_register() const { return send_batch_on_register_; }
+  void set_send_batch_on_register(bool value) {
+    send_batch_on_register_ = value;
+  }
+
  private:
   uint32_t message_count_ = {};
+  uint32_t max_messages_per_second_ = {};
   uint32_t seed_ = {};
   uint64_t message_size_ = {};
+  bool send_batch_on_register_ = {};
 
   // Allows to preserve unknown protobuf fields for compatibility
   // with future versions of .proto files.

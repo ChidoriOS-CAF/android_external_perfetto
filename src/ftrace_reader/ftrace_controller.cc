@@ -20,7 +20,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -144,7 +143,7 @@ FtraceController::~FtraceController() {
 }
 
 uint64_t FtraceController::NowMs() const {
-  return base::GetWallTimeMs().count();
+  return static_cast<uint64_t>(base::GetWallTimeMs().count());
 }
 
 // static
@@ -307,12 +306,10 @@ void FtraceController::OnDataAvailable(
   if (cpus_to_drain_.none()) {
     // If this was the first CPU to wake up, schedule a drain for the next drain
     // interval.
-    uint64_t delay_ms = NowMs() % drain_period_ms;
-    if (!delay_ms)
-      delay_ms = drain_period_ms;
+    uint32_t delay_ms = drain_period_ms - (NowMs() % drain_period_ms);
     task_runner_->PostDelayedTask(
         std::bind(&FtraceController::DrainCPUs, weak_this, generation),
-        static_cast<int>(delay_ms));
+        delay_ms);
   }
   cpus_to_drain_[cpu] = true;
 
@@ -418,5 +415,7 @@ void FtraceMetadata::Clear() {
   overwrite_count = 0;
   FinishEvent();
 }
+
+FtraceSink::Delegate::~Delegate() = default;
 
 }  // namespace perfetto

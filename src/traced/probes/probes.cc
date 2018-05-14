@@ -25,12 +25,14 @@
 
 #include "src/ftrace_reader/ftrace_procfs.h"
 #include "src/traced/probes/probes_producer.h"
+#include "src/tracing/ipc/default_socket.h"
 
 namespace perfetto {
 
 int __attribute__((visibility("default"))) ProbesMain(int argc, char** argv) {
   static struct option long_options[] = {
-      {"cleanup-after-crash", no_argument, 0, 'd'}, {nullptr, 0, 0, 0}};
+      {"cleanup-after-crash", no_argument, nullptr, 'd'},
+      {nullptr, 0, nullptr, 0}};
   int option_index;
   int c;
   while ((c = getopt_long(argc, argv, "", long_options, &option_index)) != -1) {
@@ -67,7 +69,7 @@ int __attribute__((visibility("default"))) ProbesMain(int argc, char** argv) {
 
   base::UnixTaskRunner task_runner;
   ProbesProducer producer;
-  producer.ConnectWithRetries(PERFETTO_PRODUCER_SOCK_NAME, &task_runner);
+  producer.ConnectWithRetries(GetProducerSocket(), &task_runner);
   task_runner.Run();
   return 0;
 }

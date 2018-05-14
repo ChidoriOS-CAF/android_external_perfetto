@@ -123,10 +123,7 @@ class TracePacket;
 // Reads guarantee that packets for the same sequence are read in FIFO order
 // (according to their ChunkID), but don't give any guarantee about the read
 // order of packets from different sequences (see ReadPacket() comments below).
-//
-// TODO(primiano): the name of this class is deliberately typo-ed as a temporary
-// situation until we replace TraceBuffer within service_impl.cc.
-class TraceBuffez {
+class TraceBuffer {
  public:
   static const size_t InlineChunkHeaderSize;  // For test/fake_packet.{cc,h}.
 
@@ -151,9 +148,9 @@ class TraceBuffez {
   };
 
   // Can return nullptr if the memory allocation fails.
-  static std::unique_ptr<TraceBuffez> Create(size_t size_in_bytes);
+  static std::unique_ptr<TraceBuffer> Create(size_t size_in_bytes);
 
-  ~TraceBuffez();
+  ~TraceBuffer();
 
   // Copies a Chunk from a producer Shared Memory Buffer into the trace buffer.
   // |src| points to the first packet in the SharedMemoryABI's chunk shared
@@ -399,9 +396,9 @@ class TraceBuffez {
     kFailedStayOnSameSequence,
   };
 
-  TraceBuffez();
-  TraceBuffez(const TraceBuffez&) = delete;
-  TraceBuffez& operator=(const TraceBuffez&) = delete;
+  TraceBuffer();
+  TraceBuffer(const TraceBuffer&) = delete;
+  TraceBuffer& operator=(const TraceBuffer&) = delete;
 
   bool Initialize(size_t size);
 
@@ -494,7 +491,7 @@ class TraceBuffez {
 
   uint8_t* begin() const { return reinterpret_cast<uint8_t*>(data_.get()); }
   uint8_t* end() const { return begin() + size_; }
-  size_t size_to_end() const { return end() - wptr_; }
+  size_t size_to_end() const { return static_cast<size_t>(end() - wptr_); }
 
   base::PageAllocator::UniquePtr data_;
   size_t size_ = 0;            // Size in bytes of |data_|.

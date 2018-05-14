@@ -15,6 +15,7 @@
  */
 
 #include <random>
+#include <sys/system_properties.h>
 
 #include "gtest/gtest.h"
 #include "perfetto/trace/test_event.pbzero.h"
@@ -22,74 +23,62 @@
 #include "perfetto/trace/trace_packet.pbzero.h"
 #include "perfetto/traced/traced.h"
 #include "perfetto/tracing/core/trace_packet.h"
-#include "test/fake_consumer.h"
+#include "src/base/test/test_task_runner.h"
+#include "test/test_helper.h"
+
+#include "perfetto/trace/trace_packet.pb.h"
 
 namespace perfetto {
 
 class PerfettoCtsTest : public ::testing::Test {
  protected:
   void TestMockProducer(const std::string& producer_name) {
+    // Filter out watches; they do not have the required infrastructure to run
+    // these tests.
+    char chars[PROP_VALUE_MAX + 1];
+    int ret = __system_property_get("ro.build.characteristics", chars);
+    ASSERT_GE(ret, 0);
+    std::string characteristics(chars);
+    if (characteristics.find("watch") != std::string::npos) {
+      return;
+    }
+
     base::TestTaskRunner task_runner;
 
-    // Setup the trace config.
+    TestHelper helper(&task_runner);
+    helper.ConnectConsumer();
+    helper.WaitForConsumerConnect();
+
     TraceConfig trace_config;
-    trace_config.add_buffers()->set_size_kb(4096 * 10);
+    trace_config.add_buffers()->set_size_kb(1024);
     trace_config.set_duration_ms(200);
 
     auto* ds_config = trace_config.add_data_sources()->mutable_config();
     ds_config->set_name(producer_name);
     ds_config->set_target_buffer(0);
 
-    // The parameters for the producer.
     static constexpr uint32_t kRandomSeed = 42;
     static constexpr uint32_t kEventCount = 10;
     static constexpr uint32_t kMessageSizeBytes = 1024;
-
-    // Setup the test to use a random number generator.
     ds_config->mutable_for_testing()->set_seed(kRandomSeed);
     ds_config->mutable_for_testing()->set_message_count(kEventCount);
     ds_config->mutable_for_testing()->set_message_size(kMessageSizeBytes);
+    ds_config->mutable_for_testing()->set_send_batch_on_register(true);
 
-    // Create the random generator with the same seed.
+    helper.StartTracing(trace_config);
+    helper.WaitForTracingDisabled();
+
+    helper.ReadData();
+    helper.WaitForReadData();
+
+    const auto& packets = helper.trace();
+    ASSERT_EQ(packets.size(), kEventCount);
+
     std::minstd_rand0 rnd_engine(kRandomSeed);
-
-    // Setip the function.
-    uint64_t total = 0;
-    auto on_readback_complete =
-        task_runner.CreateCheckpoint("readback.complete");
-    auto function = [&total, &on_readback_complete, &rnd_engine](
-                        std::vector<TracePacket> packets, bool has_more) {
-      for (auto& packet : packets) {
-        ASSERT_TRUE(packet.Decode());
-        ASSERT_TRUE(packet->has_for_testing() || packet->has_clock_snapshot() ||
-                    packet->has_trace_config());
-        if (packet->has_clock_snapshot() || packet->has_trace_config()) {
-          continue;
-        }
-        ASSERT_EQ(protos::TracePacket::kTrustedUid,
-                  packet->optional_trusted_uid_case());
-        ASSERT_EQ(packet->for_testing().seq_value(), rnd_engine());
-      }
-      total += packets.size();
-
-      if (!has_more) {
-        // Extra packets for the clock snapshot and trace config.
-        ASSERT_EQ(total, kEventCount + 2);
-        on_readback_complete();
-      }
-    };
-
-    // Finally, make the consumer connect to the service.
-    auto on_connect = task_runner.CreateCheckpoint("consumer.connected");
-    FakeConsumer consumer(trace_config, std::move(on_connect),
-                          std::move(function), &task_runner);
-    consumer.Connect(PERFETTO_CONSUMER_SOCK_NAME);
-    task_runner.RunUntilCheckpoint("consumer.connected");
-
-    consumer.EnableTracing();
-    task_runner.PostDelayedTask([&consumer]() { consumer.ReadTraceData(); },
-                                1000);
-    task_runner.RunUntilCheckpoint("readback.complete");
+    for (const auto& packet : packets) {
+      ASSERT_TRUE(packet.has_for_testing());
+      ASSERT_EQ(packet.for_testing().seq_value(), rnd_engine());
+    }
   }
 };
 

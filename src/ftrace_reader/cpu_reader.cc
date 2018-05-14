@@ -24,14 +24,12 @@
 #include <string>
 #include <utility>
 
+#include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/base/utils.h"
-#include "proto_translation_table.h"
+#include "src/ftrace_reader/proto_translation_table.h"
 
 #include "perfetto/trace/ftrace/ftrace_event.pbzero.h"
-#include "perfetto/trace/ftrace/print.pbzero.h"
-#include "perfetto/trace/ftrace/sched_switch.pbzero.h"
-
 #include "perfetto/trace/ftrace/ftrace_event_bundle.pbzero.h"
 
 namespace perfetto {
@@ -40,12 +38,13 @@ namespace {
 
 bool ReadIntoString(const uint8_t* start,
                     const uint8_t* end,
-                    size_t field_id,
+                    uint32_t field_id,
                     protozero::Message* out) {
   for (const uint8_t* c = start; c < end; c++) {
     if (*c != '\0')
       continue;
-    out->AppendBytes(field_id, reinterpret_cast<const char*>(start), c - start);
+    out->AppendBytes(field_id, reinterpret_cast<const char*>(start),
+                     static_cast<uintptr_t>(c - start));
     return true;
   }
   return false;
@@ -133,11 +132,16 @@ CpuReader::CpuReader(const ProtoTranslationTable* table,
   // hence make the join() in the dtor unreliable.
   struct sigaction current_act = {};
   PERFETTO_CHECK(sigaction(SIGPIPE, nullptr, &current_act) == 0);
+#pragma GCC diagnostic push
+#if defined(__clang__)
+#pragma GCC diagnostic ignored "-Wdisabled-macro-expansion"
+#endif
   if (current_act.sa_handler == SIG_DFL || current_act.sa_handler == SIG_IGN) {
     struct sigaction act = {};
     act.sa_sigaction = [](int, siginfo_t*, void*) {};
     PERFETTO_CHECK(sigaction(SIGPIPE, &act, nullptr) == 0);
   }
+#pragma GCC diagnostic pop
 
   worker_thread_ =
       std::thread(std::bind(&RunWorkerThread, cpu_, *trace_fd_,
@@ -162,6 +166,8 @@ void CpuReader::RunWorkerThread(
     int trace_fd,
     int staging_write_fd,
     const std::function<void()>& on_data_available) {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
+    PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
   // This thread is responsible for moving data from the trace pipe into the
   // staging pipe at least one page at a time. This is done using the splice(2)
   // system call, which unlike poll/select makes it possible to block until at
@@ -176,8 +182,8 @@ void CpuReader::RunWorkerThread(
     // First do a blocking splice which sleeps until there is at least one
     // page of data available and enough space to write it into the staging
     // pipe.
-    int splice_res = splice(trace_fd, nullptr, staging_write_fd, nullptr,
-                            base::kPageSize, SPLICE_F_MOVE);
+    ssize_t splice_res = splice(trace_fd, nullptr, staging_write_fd, nullptr,
+                                base::kPageSize, SPLICE_F_MOVE);
     if (splice_res < 0) {
       // The kernel ftrace code has its own splice() implementation that can
       // occasionally fail with transient errors not reported in man 2 splice.
@@ -207,41 +213,13 @@ void CpuReader::RunWorkerThread(
     // This callback will block until we are allowed to read more data.
     on_data_available();
   }
-}
-
-// static
-std::map<uint64_t, std::string> CpuReader::GetFilenamesForInodeNumbers(
-    const std::set<uint64_t>& inode_numbers) {
-  std::map<uint64_t, std::string> inode_to_filename;
-  if (inode_numbers.empty())
-    return inode_to_filename;
-  std::queue<std::string> queue;
-  // Starts reading files from current directory
-  queue.push(".");
-  while (!queue.empty()) {
-    struct dirent* entry;
-    std::string filepath = queue.front();
-    filepath += "/";
-    DIR* dir = opendir(queue.front().c_str());
-    queue.pop();
-    if (dir == nullptr)
-      continue;
-    while ((entry = readdir(dir)) != nullptr) {
-      std::string filename = entry->d_name;
-      if (filename.compare(".") == 0 || filename.compare("..") == 0)
-        continue;
-      uint64_t inode_number = entry->d_ino;
-      // Check if this inode number matches any of the passed in inode
-      // numbers from events
-      if (inode_numbers.find(inode_number) != inode_numbers.end())
-        inode_to_filename.emplace(inode_number, filepath + filename);
-      // Continue iterating through files if current entry is a directory
-      if (entry->d_type == DT_DIR)
-        queue.push(filepath + filename);
-    }
-    closedir(dir);
-  }
-  return inode_to_filename;
+#else
+  base::ignore_result(cpu);
+  base::ignore_result(trace_fd);
+  base::ignore_result(staging_write_fd);
+  base::ignore_result(on_data_available);
+  PERFETTO_ELOG("Supported only on Linux/Android");
+#endif
 }
 
 bool CpuReader::Drain(const std::array<const EventFilter*, kMaxSinks>& filters,
@@ -269,7 +247,7 @@ bool CpuReader::Drain(const std::array<const EventFilter*, kMaxSinks>& filters,
   for (size_t i = 0; i < kMaxSinks; i++) {
     if (!filters[i])
       break;
-    bundles[i]->set_cpu(cpu_);
+    bundles[i]->set_cpu(static_cast<uint32_t>(cpu_));
     bundles[i]->set_overwrite_count(metadatas[i]->overwrite_count);
   }
 
@@ -311,7 +289,7 @@ size_t CpuReader::ParsePage(const uint8_t* ptr,
   page_header.size = (overwrite_and_size & 0x000000000000ffffull) >> 0;
   page_header.overwrite = (overwrite_and_size & 0x00000000ff000000ull) >> 24;
 
-  metadata->overwrite_count = page_header.overwrite;
+  metadata->overwrite_count = static_cast<uint32_t>(page_header.overwrite);
 
   const uint8_t* const end = ptr + page_header.size;
   if (end > end_of_page)
@@ -379,6 +357,9 @@ size_t CpuReader::ParsePage(const uint8_t* ptr,
         const uint8_t* start = ptr;
         const uint8_t* next = ptr + event_size;
 
+        if (next > end)
+          return 0;
+
         uint16_t ftrace_event_id;
         if (!ReadAndAdvance<uint16_t>(&ptr, end, &ftrace_event_id))
           return 0;
@@ -406,7 +387,7 @@ bool CpuReader::ParseEvent(uint16_t ftrace_event_id,
                            protozero::Message* message,
                            FtraceMetadata* metadata) {
   PERFETTO_DCHECK(start < end);
-  const size_t length = end - start;
+  const size_t length = static_cast<size_t>(end - start);
 
   // TODO(hjd): Rework to work even if the event is unknown.
   const Event& info = *table->GetEventById(ftrace_event_id);
@@ -450,7 +431,11 @@ bool CpuReader::ParseField(const Field& field,
 
   switch (field.strategy) {
     case kUint8ToUint32:
+      ReadIntoVarInt<uint8_t>(field_start, field_id, message);
+      return true;
     case kUint16ToUint32:
+      ReadIntoVarInt<uint16_t>(field_start, field_id, message);
+      return true;
     case kUint32ToUint32:
     case kUint32ToUint64:
       ReadIntoVarInt<uint32_t>(field_start, field_id, message);
@@ -459,7 +444,11 @@ bool CpuReader::ParseField(const Field& field,
       ReadIntoVarInt<uint64_t>(field_start, field_id, message);
       return true;
     case kInt8ToInt32:
+      ReadIntoVarInt<int8_t>(field_start, field_id, message);
+      return true;
     case kInt16ToInt32:
+      ReadIntoVarInt<int16_t>(field_start, field_id, message);
+      return true;
     case kInt32ToInt32:
     case kInt32ToInt64:
       ReadIntoVarInt<int32_t>(field_start, field_id, message);

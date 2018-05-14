@@ -20,13 +20,13 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <sys/sysmacros.h>
 #include <array>
 #include <memory>
 #include <set>
 #include <thread>
 
 #include "gtest/gtest_prod.h"
+#include "perfetto/base/build_config.h"
 #include "perfetto/base/scoped_file.h"
 #include "perfetto/base/thread_checker.h"
 #include "perfetto/ftrace_reader/ftrace_controller.h"
@@ -103,7 +103,7 @@ class CpuReader {
   // Returns the raw value not the varint.
   template <typename T>
   static T ReadIntoVarInt(const uint8_t* start,
-                          size_t field_id,
+                          uint32_t field_id,
                           protozero::Message* out) {
     T t;
     memcpy(&t, reinterpret_cast<const void*>(start), sizeof(T));
@@ -113,7 +113,7 @@ class CpuReader {
 
   template <typename T>
   static void ReadInode(const uint8_t* start,
-                        size_t field_id,
+                        uint32_t field_id,
                         protozero::Message* out,
                         FtraceMetadata* metadata) {
     T t = ReadIntoVarInt<T>(start, field_id, out);
@@ -122,7 +122,7 @@ class CpuReader {
 
   template <typename T>
   static void ReadDevId(const uint8_t* start,
-                        size_t field_id,
+                        uint32_t field_id,
                         protozero::Message* out,
                         FtraceMetadata* metadata) {
     T t;
@@ -133,7 +133,7 @@ class CpuReader {
   }
 
   static void ReadPid(const uint8_t* start,
-                      size_t field_id,
+                      uint32_t field_id,
                       protozero::Message* out,
                       FtraceMetadata* metadata) {
     int32_t pid = ReadIntoVarInt<int32_t>(start, field_id, out);
@@ -141,7 +141,7 @@ class CpuReader {
   }
 
   static void ReadCommonPid(const uint8_t* start,
-                            size_t field_id,
+                            uint32_t field_id,
                             protozero::Message* out,
                             FtraceMetadata* metadata) {
     int32_t pid = ReadIntoVarInt<int32_t>(start, field_id, out);
@@ -158,19 +158,12 @@ class CpuReader {
     // Convert to user space id using
     // https://github.com/torvalds/linux/blob/v4.12/include/linux/kdev_t.h#L10
     // TODO(azappone): see if this is the same on all platforms
-    unsigned int maj = static_cast<unsigned int>((kernel_dev) >> 20);
-    unsigned int min =
-        static_cast<unsigned int>((kernel_dev) & ((1U << 20) - 1));
-    return static_cast<BlockDeviceID>(makedev(maj, min));
+    uint64_t maj = static_cast<uint64_t>(kernel_dev) >> 20;
+    uint64_t min = static_cast<uint64_t>(kernel_dev) & ((1U << 20) - 1);
+    return static_cast<BlockDeviceID>(  // From makedev()
+        ((maj & 0xfffff000ULL) << 32) | ((maj & 0xfffULL) << 8) |
+        ((min & 0xffffff00ULL) << 12) | ((min & 0xffULL)));
   }
-
-  // Iterate through every file in the current directory and check if the inode
-  // number of each file matches any of the inode numbers saved in events.
-  // Returns map of inode number to filename for every inode number that is
-  // found in the filesystem. If the inode number saved from events is not
-  // found, nothing is added to the map.
-  static std::map<uint64_t, std::string> GetFilenamesForInodeNumbers(
-      const std::set<uint64_t>& inode_numbers);
 
   // Parse a raw ftrace page beginning at ptr and write the events a protos
   // into the provided bundle respecting the given event filter.

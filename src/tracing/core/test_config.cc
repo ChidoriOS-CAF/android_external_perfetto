@@ -43,12 +43,24 @@ void TestConfig::FromProto(const perfetto::protos::TestConfig& proto) {
                 "size mismatch");
   message_count_ = static_cast<decltype(message_count_)>(proto.message_count());
 
+  static_assert(sizeof(max_messages_per_second_) ==
+                    sizeof(proto.max_messages_per_second()),
+                "size mismatch");
+  max_messages_per_second_ = static_cast<decltype(max_messages_per_second_)>(
+      proto.max_messages_per_second());
+
   static_assert(sizeof(seed_) == sizeof(proto.seed()), "size mismatch");
   seed_ = static_cast<decltype(seed_)>(proto.seed());
 
   static_assert(sizeof(message_size_) == sizeof(proto.message_size()),
                 "size mismatch");
   message_size_ = static_cast<decltype(message_size_)>(proto.message_size());
+
+  static_assert(
+      sizeof(send_batch_on_register_) == sizeof(proto.send_batch_on_register()),
+      "size mismatch");
+  send_batch_on_register_ = static_cast<decltype(send_batch_on_register_)>(
+      proto.send_batch_on_register());
   unknown_fields_ = proto.unknown_fields();
 }
 
@@ -60,6 +72,13 @@ void TestConfig::ToProto(perfetto::protos::TestConfig* proto) const {
   proto->set_message_count(
       static_cast<decltype(proto->message_count())>(message_count_));
 
+  static_assert(sizeof(max_messages_per_second_) ==
+                    sizeof(proto->max_messages_per_second()),
+                "size mismatch");
+  proto->set_max_messages_per_second(
+      static_cast<decltype(proto->max_messages_per_second())>(
+          max_messages_per_second_));
+
   static_assert(sizeof(seed_) == sizeof(proto->seed()), "size mismatch");
   proto->set_seed(static_cast<decltype(proto->seed())>(seed_));
 
@@ -67,6 +86,13 @@ void TestConfig::ToProto(perfetto::protos::TestConfig* proto) const {
                 "size mismatch");
   proto->set_message_size(
       static_cast<decltype(proto->message_size())>(message_size_));
+
+  static_assert(sizeof(send_batch_on_register_) ==
+                    sizeof(proto->send_batch_on_register()),
+                "size mismatch");
+  proto->set_send_batch_on_register(
+      static_cast<decltype(proto->send_batch_on_register())>(
+          send_batch_on_register_));
   *(proto->mutable_unknown_fields()) = unknown_fields_;
 }
 

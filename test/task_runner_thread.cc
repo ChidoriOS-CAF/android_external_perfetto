@@ -69,7 +69,7 @@ uint64_t TaskRunnerThread::GetThreadCPUTimeNs() {
 
   runner_->PostTask([this, &thread_time_ns, &cv] {
     std::unique_lock<std::mutex> inner_lock(mutex_);
-    thread_time_ns = base::GetThreadCPUTimeNs().count();
+    thread_time_ns = static_cast<uint64_t>(base::GetThreadCPUTimeNs().count());
     cv.notify_one();
   });
 
@@ -78,7 +78,11 @@ uint64_t TaskRunnerThread::GetThreadCPUTimeNs() {
 }
 
 void TaskRunnerThread::Run(std::unique_ptr<ThreadDelegate> delegate) {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+  pthread_setname_np(name_);
+#else
   pthread_setname_np(pthread_self(), name_);
+#endif
 
   // Create the task runner and execute the specicalised code.
   base::PlatformTaskRunner task_runner;
@@ -106,5 +110,7 @@ void TaskRunnerThread::Run(std::unique_ptr<ThreadDelegate> delegate) {
     runner_ = nullptr;
   }
 }
+
+ThreadDelegate::~ThreadDelegate() = default;
 
 }  // namespace perfetto
