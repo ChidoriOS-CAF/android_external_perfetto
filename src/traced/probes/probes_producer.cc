@@ -35,6 +35,7 @@
 
 #include "perfetto/trace/filesystem/inode_file_map.pbzero.h"
 #include "perfetto/trace/ftrace/ftrace_event_bundle.pbzero.h"
+#include "perfetto/trace/ftrace/ftrace_stats.pbzero.h"
 #include "perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
@@ -225,15 +226,14 @@ void ProbesProducer::CreateProcessStatsDataSourceInstance(
   auto source = std::unique_ptr<ProcessStatsDataSource>(
       new ProcessStatsDataSource(session_id, std::move(trace_writer), config));
   auto it_and_inserted = process_stats_sources_.emplace(id, std::move(source));
-  PERFETTO_DCHECK(it_and_inserted.second);
-  const auto& quirks =
-      it_and_inserted.first->second->config().process_stats_config().quirks();
-  if (std::find(quirks.begin(), quirks.end(),
-                ProcessStatsConfig::DISABLE_INITIAL_DUMP) != quirks.end()) {
-    PERFETTO_DLOG("Initial process tree dump is disabled.");
+  if (!it_and_inserted.second) {
+    PERFETTO_DCHECK(false);
     return;
   }
-  it_and_inserted.first->second->WriteAllProcesses();
+  ProcessStatsDataSource* ps_data_source = it_and_inserted.first->second.get();
+  if (config.process_stats_config().scan_all_processes_on_start()) {
+    ps_data_source->WriteAllProcesses();
+  }
 }
 
 void ProbesProducer::TearDownDataSourceInstance(DataSourceInstanceID id) {
@@ -313,13 +313,36 @@ ProbesProducer::SinkDelegate::SinkDelegate(TracingSessionID id,
 
 ProbesProducer::SinkDelegate::~SinkDelegate() = default;
 
+void ProbesProducer::SinkDelegate::OnCreate(FtraceSink* sink) {
+  sink->DumpFtraceStats(&stats_before_);
+}
+
 void ProbesProducer::SinkDelegate::Flush() {
   // TODO(primiano): this still doesn't flush data from the kernel ftrace
   // buffers (see b/73886018). We should do that and delay the
   // NotifyFlushComplete() until the ftrace data has been drained from the
   // kernel ftrace buffer and written in the SMB.
-  if (writer_ && (!trace_packet_ || trace_packet_->is_finalized()))
+  if (writer_ && (!trace_packet_ || trace_packet_->is_finalized())) {
+    WriteStats();
     writer_->Flush();
+  }
+}
+
+void ProbesProducer::SinkDelegate::WriteStats() {
+  {
+    auto before_packet = writer_->NewTracePacket();
+    auto out = before_packet->set_ftrace_stats();
+    out->set_phase(protos::pbzero::FtraceStats_Phase_START_OF_TRACE);
+    stats_before_.Write(out);
+  }
+  {
+    FtraceStats stats_after{};
+    sink_->DumpFtraceStats(&stats_after);
+    auto after_packet = writer_->NewTracePacket();
+    auto out = after_packet->set_ftrace_stats();
+    out->set_phase(protos::pbzero::FtraceStats_Phase_END_OF_TRACE);
+    stats_after.Write(out);
+  }
 }
 
 ProbesProducer::FtraceBundleHandle
